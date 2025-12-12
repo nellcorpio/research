@@ -260,8 +260,8 @@ class Dashboard extends JFrame {
     private List<JobOrder> allJobs;
     private DefaultTableModel activeModel, archiveModel;
     private JTable activeTable;
-    private JTextField tfLoc, tfDesc, tfSearch;
-    private JComboBox<String> cbPrioCreate;
+    private JTextField tfSearch;
+    // Removed class-level input fields because we use a pop-up now
 
     public Dashboard() {
         super("Enterprise Job Order System - Logged in as Admin");
@@ -275,7 +275,7 @@ class Dashboard extends JFrame {
         
         // --- Tab 1: Active Jobs ---
         JPanel activePanel = new JPanel(new BorderLayout());
-        activePanel.add(createInputPanel(), BorderLayout.NORTH);
+        activePanel.add(createInputPanel(), BorderLayout.NORTH); // This now creates the Pop-up Button
         activePanel.add(createActiveTablePanel(), BorderLayout.CENTER);
         activePanel.add(createActionPanel(), BorderLayout.SOUTH);
         
@@ -299,29 +299,54 @@ class Dashboard extends JFrame {
 
     // --- GUI Builders ---
 
+    // === MODIFIED: This now creates a Button that launches a Pop-up ===
     private JPanel createInputPanel() {
         JPanel p = new JPanel(new FlowLayout(FlowLayout.LEFT, 15, 15));
-        p.setBorder(BorderFactory.createTitledBorder("New Ticket"));
+        p.setBorder(BorderFactory.createTitledBorder("Ticket Management"));
         
-        tfLoc = new JTextField(10);
-        tfDesc = new JTextField(25);
-        cbPrioCreate = new JComboBox<>(new String[]{"LOW", "MEDIUM", "HIGH"});
-        JButton btnAdd = new JButton("Create");
+        JButton btnCreate = new JButton("+ Create New Ticket");
+        btnCreate.setFont(new Font("Segoe UI", Font.BOLD, 14));
+        btnCreate.setBackground(new Color(100, 200, 100));
+        btnCreate.setForeground(Color.WHITE);
         
-        p.add(new JLabel("Location:")); p.add(tfLoc);
-        p.add(new JLabel("Issue:")); p.add(tfDesc);
-        p.add(new JLabel("Priority:")); p.add(cbPrioCreate);
-        p.add(btnAdd);
+        p.add(btnCreate);
 
-        btnAdd.addActionListener(e -> {
-            if (tfLoc.getText().isEmpty() || tfDesc.getText().isEmpty()) return;
-            String prio = (String) cbPrioCreate.getSelectedItem();
-            JobOrder job = new JobOrder(tfLoc.getText(), tfDesc.getText(), prio);
-            allJobs.add(job);
-            if (prio.equals("HIGH")) JOptionPane.showMessageDialog(this, "High Priority Ticket Created!", "Alert", JOptionPane.WARNING_MESSAGE);
-            refreshTables();
-            tfLoc.setText(""); tfDesc.setText("");
-            DataManager.save(allJobs);
+        btnCreate.addActionListener(e -> {
+            // Create the Pop-up Components
+            JTextField popupLoc = new JTextField();
+            JTextField popupDesc = new JTextField();
+            JComboBox<String> popupPrio = new JComboBox<>(new String[]{"LOW", "MEDIUM", "HIGH"});
+
+            JPanel panel = new JPanel(new GridLayout(0, 1));
+            panel.add(new JLabel("Location / Dept:"));
+            panel.add(popupLoc);
+            panel.add(new JLabel("Issue Description:"));
+            panel.add(popupDesc);
+            panel.add(new JLabel("Priority Level:"));
+            panel.add(popupPrio);
+
+            // Show the Pop-up
+            int result = JOptionPane.showConfirmDialog(this, panel, "Create New Job Order",
+                JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+
+            // Process the Input
+            if (result == JOptionPane.OK_OPTION) {
+                String loc = popupLoc.getText();
+                String desc = popupDesc.getText();
+                String prio = (String) popupPrio.getSelectedItem();
+
+                if (loc.isEmpty() || desc.isEmpty()) {
+                    JOptionPane.showMessageDialog(this, "Please fill in all fields!", "Error", JOptionPane.ERROR_MESSAGE);
+                } else {
+                    JobOrder job = new JobOrder(loc, desc, prio);
+                    allJobs.add(job);
+                    if (prio.equals("HIGH")) {
+                        JOptionPane.showMessageDialog(this, "High Priority Ticket Created!", "Alert", JOptionPane.WARNING_MESSAGE);
+                    }
+                    refreshTables();
+                    DataManager.save(allJobs);
+                }
+            }
         });
         return p;
     }
