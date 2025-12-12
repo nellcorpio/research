@@ -1,222 +1,482 @@
-
-package nell;
-
 import javax.swing.*;
-import javax.swing.table.DefaultTableModel;
-import javax.swing.table.TableRowSorter;
+import javax.swing.table.*;
 import java.awt.*;
-import java.awt.event.ActionListener;
-import java.awt.event.MouseAdapter;
-import java.awt.event.MouseEvent;
-import java.text.SimpleDateFormat;
-import java.util.Date;
+import java.awt.event.*;
+import java.awt.print.PrinterException;
+import java.io.*;
+import java.time.Duration;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.Vector;
+import java.util.stream.Collectors;
 
-// --- 1. The Main Entry Point (Login System) ---
-public class JobOrderApp {
+// ==========================================
+// 1. THE MODEL (Enhanced JobOrder)
+// Features: Auto-ID, Time Tracking, Logs
+// ==========================================
+class JobOrder {
+    private static int counter = 1;
+    
+    private String ticketNumber; // JO-0001
+    private String location;
+    private String description;
+    private String technician;
+    private String priority;
+    private String status;
+    private StringBuilder historyLog; // For timeline/history
+    
+    // Time Tracking
+    private LocalDateTime dateCreated;
+    private LocalDateTime dateStarted;
+    private LocalDateTime dateCompleted;
 
-    public static void main(String[] args) {
-        SwingUtilities.invokeLater(() -> createLoginScreen());
+    // Formatting Tools
+    public static final DateTimeFormatter D_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
+
+    // Constructor for NEW jobs
+    public JobOrder(String location, String description, String priority) {
+        this.ticketNumber = String.format("JO-%04d", counter++);
+        this.location = location;
+        this.description = description;
+        this.priority = priority;
+        this.status = "PENDING";
+        this.technician = "Unassigned";
+        this.dateCreated = LocalDateTime.now();
+        this.historyLog = new StringBuilder();
+        addToHistory("Created Ticket at " + dateCreated.format(D_FMT));
     }
 
-    private static void createLoginScreen() {
-        JFrame loginFrame = new JFrame("System Login");
-        loginFrame.setSize(350, 200);
-        loginFrame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        loginFrame.setLayout(null);
-        loginFrame.setLocationRelativeTo(null); // Center on screen
-
-        // UI Components
-        JLabel lblUser = new JLabel("Username:");
-        lblUser.setBounds(30, 30, 80, 25);
-        JTextField txtUser = new JTextField();
-        txtUser.setBounds(110, 30, 180, 25);
-
-        JLabel lblPass = new JLabel("Password:");
-        lblPass.setBounds(30, 70, 80, 25);
-        JPasswordField txtPass = new JPasswordField();
-        txtPass.setBounds(110, 70, 180, 25);
-
-        JButton btnLogin = new JButton("Login");
-        btnLogin.setBounds(110, 110, 80, 30);
-        JButton btnExit = new JButton("Exit");
-        btnExit.setBounds(200, 110, 80, 30);
-
-        // Add to frame
-        loginFrame.add(lblUser);
-        loginFrame.add(txtUser);
-        loginFrame.add(lblPass);
-        loginFrame.add(txtPass);
-        loginFrame.add(btnLogin);
-        loginFrame.add(btnExit);
-
-        // --- Button Logic ---
+    // Constructor for LOADING from CSV
+    public JobOrder(String ticket, String loc, String desc, String tech, String prio, String stat, String created, String started, String completed, String logs) {
+        this.ticketNumber = ticket;
+        this.location = loc;
+        this.description = desc;
+        this.technician = tech;
+        this.priority = prio;
+        this.status = stat;
+        this.historyLog = new StringBuilder(logs.replace("~", "\n")); // Restore newlines
         
-        // EXIT BUTTON
-        btnExit.addActionListener(e -> System.exit(0));
+        // Parse dates safely
+        this.dateCreated = parseDate(created);
+        this.dateStarted = parseDate(started);
+        this.dateCompleted = parseDate(completed);
+        
+        // Ensure counter keeps up with loaded IDs
+        int num = Integer.parseInt(ticket.split("-")[1]);
+        if (num >= counter) counter = num + 1;
+    }
 
-        // LOGIN BUTTON
-        ActionListener loginAction = e -> {
-            String username = txtUser.getText();
-            String password = new String(txtPass.getPassword());
+    private LocalDateTime parseDate(String d) {
+        if(d == null || d.equals("null") || d.isEmpty()) return null;
+        return LocalDateTime.parse(d, D_FMT);
+    }
 
-            // HARDCODED CREDENTIALS (for demonstration)
-            if (username.equals("admin") && password.equals("admin123")) {
-                loginFrame.dispose(); // Close Login Window
-                new MaintenanceDashboard(); // Open Main System
-            } else {
-                JOptionPane.showMessageDialog(loginFrame, "Invalid Username or Password!", "Login Error", JOptionPane.ERROR_MESSAGE);
+    public void addToHistory(String action) {
+        historyLog.append("[").append(LocalDateTime.now().format(D_FMT)).append("] ").append(action).append("\n~");
+    }
+
+    // Business Logic
+    public void assignTechnician(String tech) {
+        if (!this.technician.equals(tech)) {
+            addToHistory("Technician changed from " + this.technician + " to " + tech);
+            this.technician = tech;
+        }
+    }
+
+    public void updateStatus(String newStatus) {
+        if (!this.status.equals(newStatus)) {
+            addToHistory("Status changed: " + this.status + " -> " + newStatus);
+            this.status = newStatus;
+
+            if (newStatus.equals("IN_PROGRESS") && dateStarted == null) {
+                dateStarted = LocalDateTime.now();
             }
-        };
+            if (newStatus.equals("COMPLETED")) {
+                dateCompleted = LocalDateTime.now();
+                addToHistory("Job Completed. Duration: " + getDuration());
+            }
+        }
+    }
 
-        btnLogin.addActionListener(loginAction);
+    public String getDuration() {
+        if (dateStarted == null || dateCompleted == null) return "N/A";
+        long minutes = Duration.between(dateStarted, dateCompleted).toMinutes();
+        long hours = minutes / 60;
+        long mins = minutes % 60;
+        return hours + "h " + mins + "m";
+    }
+
+    // Getters for Table
+    public Object[] toRowData() {
+        String createdStr = dateCreated.format(D_FMT);
+        return new Object[]{ticketNumber, location, description, technician, priority, status, createdStr};
+    }
+
+    // Getters for CSV Saving
+    public String toCSV() {
+        // We use | as delimiter to avoid comma issues
+        String startStr = (dateStarted != null) ? dateStarted.format(D_FMT) : "null";
+        String endStr = (dateCompleted != null) ? dateCompleted.format(D_FMT) : "null";
+        String cleanLog = historyLog.toString().replace("\n", ""); // Newlines handled by ~
         
-        // Allow pressing "Enter" key on password field to login
-        txtPass.addActionListener(loginAction);
+        return String.join("|", ticketNumber, location, description, technician, priority, status, 
+                           dateCreated.format(D_FMT), startStr, endStr, cleanLog);
+    }
 
-        loginFrame.setVisible(true);
+    // Getters for Slip Printing
+    public String getPrintableSlip() {
+        return "========================================\n" +
+               "           JOB ORDER SLIP               \n" +
+               "========================================\n" +
+               "Ticket No:  " + ticketNumber + "\n" +
+               "Date:       " + dateCreated.format(D_FMT) + "\n" +
+               "Priority:   " + priority + "\n" +
+               "----------------------------------------\n" +
+               "Location:   " + location + "\n" +
+               "Issue:      " + description + "\n" +
+               "Technician: " + technician + "\n" +
+               "Status:     " + status + "\n" +
+               "Duration:   " + getDuration() + "\n" +
+               "----------------------------------------\n" +
+               "HISTORY LOGS:\n" + historyLog.toString().replace("~", "\n") +
+               "\n========================================";
+    }
+    
+    public String getTicketNumber() { return ticketNumber; }
+    public String getPriority() { return priority; }
+    public String getStatus() { return status; }
+    public String getHistory() { return historyLog.toString().replace("~", "\n"); }
+}
+
+// ==========================================
+// 2. THE DATA MANAGER (Auto-Save to CSV)
+// ==========================================
+class DataManager {
+    private static final String FILE_NAME = "database.txt";
+
+    public static void save(java.util.List<JobOrder> jobs) {
+        try (PrintWriter writer = new PrintWriter(new FileWriter(FILE_NAME))) {
+            for (JobOrder job : jobs) {
+                writer.println(job.toCSV());
+            }
+        } catch (IOException e) {
+            System.err.println("Error saving data: " + e.getMessage());
+        }
+    }
+
+    public static java.util.List<JobOrder> load() {
+        java.util.List<JobOrder> list = new ArrayList<>();
+        File file = new File(FILE_NAME);
+        if (!file.exists()) return list;
+
+        try (BufferedReader br = new BufferedReader(new FileReader(file))) {
+            String line;
+            while ((line = br.readLine()) != null) {
+                String[] parts = line.split("\\|"); // Split by pipe
+                if (parts.length >= 10) {
+                    list.add(new JobOrder(parts[0], parts[1], parts[2], parts[3], parts[4], parts[5], parts[6], parts[7], parts[8], parts[9]));
+                }
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        return list;
     }
 }
 
-// --- 2. The Main Dashboard (The Job Tracking System) ---
-class MaintenanceDashboard {
-
-    private DefaultTableModel tableModel;
-    private int jobCounter = 1;
-
-    public MaintenanceDashboard() {
-        JFrame frame = new JFrame("Job Order & Repair Tracking System");
-        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        frame.setSize(1000, 600);
-        frame.setLayout(new BorderLayout());
-        frame.setLocationRelativeTo(null); // Center on screen
-
-        // --- TOP PANEL: Create New Request ---
-        JPanel createPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        createPanel.setBorder(BorderFactory.createTitledBorder("New Job Order"));
+// ==========================================
+// 3. THE UI RENDERER (Red Highlight Logic)
+// ==========================================
+class PriorityRenderer extends DefaultTableCellRenderer {
+    @Override
+    public Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected, boolean hasFocus, int row, int column) {
+        Component c = super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
         
-        JTextField tfLocation = new JTextField(10);
-        JTextField tfDescription = new JTextField(25);
-        JButton btnCreate = new JButton("Create Ticket");
-
-        createPanel.add(new JLabel("Location:"));
-        createPanel.add(tfLocation);
-        createPanel.add(new JLabel("Problem:"));
-        createPanel.add(tfDescription);
-        createPanel.add(btnCreate);
-
-        // --- CENTER PANEL: Table ---
-        String[] columns = {"ID", "Location", "Description", "Technician", "Priority", "Status", "Date Created", "Remarks"};
-        tableModel = new DefaultTableModel(columns, 0) {
-            @Override
-            public boolean isCellEditable(int row, int column) { return false; }
-        };
+        // Get the Status and Priority column values safely
+        String priority = (String) table.getModel().getValueAt(table.convertRowIndexToModel(row), 4); // Col 4 is Priority
         
-        JTable table = new JTable(tableModel);
-        JScrollPane scrollPane = new JScrollPane(table);
-        TableRowSorter<DefaultTableModel> sorter = new TableRowSorter<>(tableModel);
-        table.setRowSorter(sorter);
-
-        // --- BOTTOM PANEL: Controls ---
-        JPanel managementPanel = new JPanel(new GridLayout(2, 1));
+        if ("HIGH".equals(priority)) {
+            c.setBackground(new Color(255, 200, 200)); // Light Red
+            c.setForeground(Color.RED);
+        } else {
+            c.setBackground(Color.WHITE);
+            c.setForeground(Color.BLACK);
+        }
         
-        // Update Section
-        JPanel updateControls = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        updateControls.setBorder(BorderFactory.createTitledBorder("Manage Selected Job"));
+        if (isSelected) {
+            c.setBackground(new Color(184, 207, 229)); // Default selection blue
+            c.setForeground(Color.BLACK);
+        }
+        return c;
+    }
+}
 
-        JTextField tfTech = new JTextField(8);
-        JComboBox<String> cbPriority = new JComboBox<>(new String[]{"LOW", "MEDIUM", "HIGH"});
-        JComboBox<String> cbStatus = new JComboBox<>(new String[]{"PENDING", "IN_PROGRESS", "COMPLETED"});
-        JTextField tfRemarks = new JTextField(15);
-        JButton btnUpdate = new JButton("Update");
+// ==========================================
+// 4. THE MAIN APPLICATION
+// ==========================================
+public class AdvancedJobApp extends JFrame {
 
-        updateControls.add(new JLabel("Tech:"));
-        updateControls.add(tfTech);
-        updateControls.add(new JLabel("Prio:"));
-        updateControls.add(cbPriority);
-        updateControls.add(new JLabel("Status:"));
-        updateControls.add(cbStatus);
-        updateControls.add(new JLabel("Rem:"));
-        updateControls.add(tfRemarks);
-        updateControls.add(btnUpdate);
+    private java.util.List<JobOrder> allJobs;
+    private DefaultTableModel activeModel, archiveModel;
+    private JTable activeTable, archiveTable;
+    private JLabel lblStatus;
 
-        // Search Section
-        JPanel filterPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
-        JTextField tfFilter = new JTextField(15);
-        JButton btnFilter = new JButton("Filter Location");
-        JButton btnLogout = new JButton("Log Out");
+    // Inputs
+    private JTextField tfLoc, tfDesc, tfSearch;
+    private JComboBox<String> cbPrioCreate;
 
-        filterPanel.add(new JLabel("Search:"));
-        filterPanel.add(tfFilter);
-        filterPanel.add(btnFilter);
-        filterPanel.add(btnLogout);
-
-        managementPanel.add(updateControls);
-        managementPanel.add(filterPanel);
-
-        frame.add(createPanel, BorderLayout.NORTH);
-        frame.add(scrollPane, BorderLayout.CENTER);
-        frame.add(managementPanel, BorderLayout.SOUTH);
-
-        // --- LOGIC ---
-
-        // Create
-        btnCreate.addActionListener(e -> {
-            if(tfLocation.getText().isEmpty() || tfDescription.getText().isEmpty()) return;
-            String date = new SimpleDateFormat("yyyy-MM-dd HH:mm").format(new Date());
-            tableModel.addRow(new Object[]{jobCounter++, tfLocation.getText(), tfDescription.getText(), "Unassigned", "LOW", "PENDING", date, ""});
-            tfLocation.setText(""); tfDescription.setText("");
-        });
-
-        // Click Row
-        table.addMouseListener(new MouseAdapter() {
-            public void mouseClicked(MouseEvent e) {
-                int row = table.getSelectedRow();
-                if (row != -1) {
-                    int modelRow = table.convertRowIndexToModel(row);
-                    tfTech.setText((String) tableModel.getValueAt(modelRow, 3));
-                    cbPriority.setSelectedItem(tableModel.getValueAt(modelRow, 4));
-                    cbStatus.setSelectedItem(tableModel.getValueAt(modelRow, 5));
-                    tfRemarks.setText((String) tableModel.getValueAt(modelRow, 7));
-                }
-            }
-        });
-
-        // Update
-        btnUpdate.addActionListener(e -> {
-            int row = table.getSelectedRow();
-            if (row == -1) {
-                JOptionPane.showMessageDialog(frame, "Select a row first.");
-                return;
-            }
-            int modelRow = table.convertRowIndexToModel(row);
-            tableModel.setValueAt(tfTech.getText(), modelRow, 3);
-            tableModel.setValueAt(cbPriority.getSelectedItem(), modelRow, 4);
-            tableModel.setValueAt(cbStatus.getSelectedItem(), modelRow, 5);
-            tableModel.setValueAt(tfRemarks.getText(), modelRow, 7);
-        });
-
-        // Filter
-        btnFilter.addActionListener(e -> {
-            String text = tfFilter.getText();
-            if (text.length() == 0) sorter.setRowFilter(null);
-            else sorter.setRowFilter(RowFilter.regexFilter("(?i)" + text, 1));
-        });
-
-        // Logout
-        btnLogout.addActionListener(e -> {
-            frame.dispose(); // Close dashboard
-            // Call the main class method to show login again
-            JobOrderApp.main(new String[]{}); 
-        });
-
-        // Init Dummy Data
-        addDummyData();
-        frame.setVisible(true);
+    public static void main(String[] args) {
+        SwingUtilities.invokeLater(AdvancedJobApp::new);
     }
 
-    private void addDummyData() {
-        String date = new SimpleDateFormat("yyyy-MM-dd HH:mm").format(new Date());
-        tableModel.addRow(new Object[]{jobCounter++, "Room 203", "PC will not boot", "Unassigned", "HIGH", "PENDING", date, ""});
-        tableModel.addRow(new Object[]{jobCounter++, "HR Dept", "Printer Jam", "Mike", "MEDIUM", "IN_PROGRESS", date, "Parts ordered"});
+    public AdvancedJobApp() {
+        super("Enterprise Job Order Tracking System v2.0");
+        setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        setSize(1200, 750);
+        setLocationRelativeTo(null);
+
+        // Load Data
+        allJobs = DataManager.load();
+
+        // --- COMPONENTS SETUP ---
+        JTabbedPane tabbedPane = new JTabbedPane();
+        
+        // Tab 1: Active Jobs
+        JPanel activePanel = new JPanel(new BorderLayout());
+        activePanel.add(createInputPanel(), BorderLayout.NORTH);
+        activePanel.add(createActiveTablePanel(), BorderLayout.CENTER);
+        activePanel.add(createActionPanel(), BorderLayout.SOUTH);
+        
+        // Tab 2: Archives (Completed)
+        JPanel archivePanel = new JPanel(new BorderLayout());
+        archivePanel.add(createArchiveTablePanel(), BorderLayout.CENTER);
+
+        tabbedPane.addTab("Active Job Orders", activePanel);
+        tabbedPane.addTab("Completed Archives", archivePanel);
+
+        add(tabbedPane);
+        
+        // Initial Refresh
+        refreshTables();
+
+        // Add Window Listener to Auto-Save on Close
+        addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosing(WindowEvent e) {
+                DataManager.save(allJobs);
+            }
+        });
+
+        setVisible(true);
+    }
+
+    // --- PANEL BUILDERS ---
+
+    private JPanel createInputPanel() {
+        JPanel p = new JPanel(new FlowLayout(FlowLayout.LEFT, 15, 15));
+        p.setBorder(BorderFactory.createTitledBorder("Create New Request"));
+        
+        tfLoc = new JTextField(10);
+        tfDesc = new JTextField(25);
+        String[] prios = {"LOW", "MEDIUM", "HIGH"};
+        cbPrioCreate = new JComboBox<>(prios);
+        JButton btnAdd = new JButton("Create Ticket");
+        btnAdd.setBackground(new Color(70, 130, 180));
+        btnAdd.setForeground(Color.WHITE);
+
+        p.add(new JLabel("Location:")); p.add(tfLoc);
+        p.add(new JLabel("Issue:")); p.add(tfDesc);
+        p.add(new JLabel("Priority:")); p.add(cbPrioCreate);
+        p.add(btnAdd);
+
+        btnAdd.addActionListener(e -> createTicket());
+        return p;
+    }
+
+    private JScrollPane createActiveTablePanel() {
+        String[] cols = {"Ticket #", "Location", "Description", "Technician", "Priority", "Status", "Date Created"};
+        activeModel = new DefaultTableModel(cols, 0) {
+            public boolean isCellEditable(int row, int col) { return false; }
+        };
+        activeTable = new JTable(activeModel);
+        activeTable.setRowHeight(25);
+        
+        // Apply Red Highlight Renderer
+        activeTable.setDefaultRenderer(Object.class, new PriorityRenderer());
+
+        return new JScrollPane(activeTable);
+    }
+
+    private JScrollPane createArchiveTablePanel() {
+        String[] cols = {"Ticket #", "Location", "Description", "Technician", "Priority", "Status", "Date Created"};
+        archiveModel = new DefaultTableModel(cols, 0);
+        archiveTable = new JTable(archiveModel);
+        return new JScrollPane(archiveTable);
+    }
+
+    private JPanel createActionPanel() {
+        JPanel main = new JPanel(new BorderLayout());
+        
+        // Management Controls
+        JPanel controls = new JPanel(new FlowLayout(FlowLayout.LEFT));
+        controls.setBorder(BorderFactory.createTitledBorder("Manage Selected Ticket"));
+        
+        JButton btnAssign = new JButton("Assign Tech");
+        JButton btnStatus = new JButton("Update Status");
+        JButton btnPrint = new JButton("Print Slip");
+        JButton btnHistory = new JButton("View History");
+
+        controls.add(btnAssign);
+        controls.add(btnStatus);
+        controls.add(btnHistory);
+        controls.add(btnPrint);
+
+        // Search Controls
+        JPanel search = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+        tfSearch = new JTextField(15);
+        JButton btnSearch = new JButton("Search All");
+        JButton btnReset = new JButton("Reset");
+        
+        search.add(new JLabel("Search (Loc/Tech/ID):"));
+        search.add(tfSearch);
+        search.add(btnSearch);
+        search.add(btnReset);
+
+        main.add(controls, BorderLayout.CENTER);
+        main.add(search, BorderLayout.SOUTH);
+
+        // --- LISTENERS ---
+        btnAssign.addActionListener(e -> assignTechAction());
+        btnStatus.addActionListener(e -> updateStatusAction());
+        btnHistory.addActionListener(e -> viewHistoryAction());
+        btnPrint.addActionListener(e -> printAction());
+        
+        btnSearch.addActionListener(e -> applyFilter(tfSearch.getText()));
+        btnReset.addActionListener(e -> { tfSearch.setText(""); applyFilter(""); });
+
+        return main;
+    }
+
+    // --- ACTIONS & LOGIC ---
+
+    private void createTicket() {
+        String loc = tfLoc.getText();
+        String desc = tfDesc.getText();
+        String prio = (String) cbPrioCreate.getSelectedItem();
+
+        if (loc.isEmpty() || desc.isEmpty()) {
+            JOptionPane.showMessageDialog(this, "Please fill all fields!");
+            return;
+        }
+
+        JobOrder job = new JobOrder(loc, desc, prio);
+        allJobs.add(job);
+        
+        // Feature: Notification for High Priority
+        if (prio.equals("HIGH")) {
+            JOptionPane.showMessageDialog(this, "ALERT: High Priority Ticket " + job.getTicketNumber() + " Created!", "Priority Alert", JOptionPane.WARNING_MESSAGE);
+        }
+
+        refreshTables();
+        tfLoc.setText(""); tfDesc.setText("");
+        DataManager.save(allJobs); // Auto Save
+    }
+
+    private void assignTechAction() {
+        JobOrder job = getSelectedJob();
+        if (job == null) return;
+
+        String tech = JOptionPane.showInputDialog(this, "Enter Technician Name:", job.toRowData()[3]);
+        if (tech != null && !tech.trim().isEmpty()) {
+            job.assignTechnician(tech);
+            // Auto update status if still pending
+            if(job.getStatus().equals("PENDING")) job.updateStatus("IN_PROGRESS");
+            refreshTables();
+            DataManager.save(allJobs);
+        }
+    }
+
+    private void updateStatusAction() {
+        JobOrder job = getSelectedJob();
+        if (job == null) return;
+
+        String[] options = {"PENDING", "IN_PROGRESS", "COMPLETED"};
+        String current = (String) activeTable.getValueAt(activeTable.getSelectedRow(), 5);
+        
+        String newStatus = (String) JOptionPane.showInputDialog(this, "Select Status:", "Update", 
+                JOptionPane.QUESTION_MESSAGE, null, options, current);
+
+        if (newStatus != null) {
+            job.updateStatus(newStatus);
+            refreshTables();
+            DataManager.save(allJobs);
+        }
+    }
+
+    private void viewHistoryAction() {
+        JobOrder job = getSelectedJob();
+        if (job == null) return;
+        
+        JTextArea area = new JTextArea(15, 40);
+        area.setText(job.getHistory());
+        area.setEditable(false);
+        JOptionPane.showMessageDialog(this, new JScrollPane(area), "Timeline for " + job.getTicketNumber(), JOptionPane.INFORMATION_MESSAGE);
+    }
+
+    private void printAction() {
+        JobOrder job = getSelectedJob();
+        if (job == null) return;
+
+        JTextArea printArea = new JTextArea(job.getPrintableSlip());
+        printArea.setFont(new Font("Monospaced", Font.PLAIN, 12));
+        
+        int choice = JOptionPane.showConfirmDialog(this, new JScrollPane(printArea), "Print Preview", JOptionPane.OK_CANCEL_OPTION);
+        
+        if (choice == JOptionPane.OK_OPTION) {
+            try {
+                boolean complete = printArea.print();
+                if (complete) JOptionPane.showMessageDialog(this, "Printing Complete");
+            } catch (PrinterException ex) {
+                ex.printStackTrace();
+            }
+        }
+    }
+
+    // --- HELPERS ---
+
+    private JobOrder getSelectedJob() {
+        int row = activeTable.getSelectedRow();
+        if (row == -1) {
+            JOptionPane.showMessageDialog(this, "Please select a job from the table.");
+            return null;
+        }
+        String ticketNum = (String) activeTable.getValueAt(row, 0);
+        return allJobs.stream().filter(j -> j.getTicketNumber().equals(ticketNum)).findFirst().orElse(null);
+    }
+
+    private void refreshTables() {
+        activeModel.setRowCount(0);
+        archiveModel.setRowCount(0);
+
+        for (JobOrder job : allJobs) {
+            if (job.getStatus().equals("COMPLETED")) {
+                archiveModel.addRow(job.toRowData());
+            } else {
+                activeModel.addRow(job.toRowData());
+            }
+        }
+    }
+
+    private void applyFilter(String query) {
+        TableRowSorter<DefaultTableModel> sorter = new TableRowSorter<>(activeModel);
+        activeTable.setRowSorter(sorter);
+        
+        if (query.trim().length() == 0) {
+            sorter.setRowFilter(null);
+        } else {
+            // Regex filter on multiple columns (Indices 0, 1, 3 -> Ticket, Loc, Tech)
+            sorter.setRowFilter(RowFilter.regexFilter("(?i)" + query, 0, 1, 3));
+        }
     }
 }
