@@ -11,6 +11,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.List;
 import java.util.stream.Collectors;
+import java.awt.Color;
 
 // ==========================================
 // 1. MAIN RUNNER
@@ -106,7 +107,7 @@ class JobOrder {
 // ==========================================
 class DataManager {
     // CHANGED FILENAME to prevent crash from old format
-    private static final String JOB_FILE = "jobs_v6.txt"; 
+    private static final String JOB_FILE = "jobs_research.txt"; 
 
     public static void saveJobs(List<JobOrder> jobs) {
         try (PrintWriter w = new PrintWriter(new FileWriter(JOB_FILE))) { 
@@ -147,7 +148,7 @@ class DataManager {
 class Dashboard extends JFrame {
 
     private List<JobOrder> allJobs;
-    private final String[] technicians = {"John Doe", "Jane Smith", "Mike Ross", "Sarah Conner"};
+    private final String[] technicians = {"Reahmeil", "Mark De Asis", "Wneljae Giangan", "E Reck Juns"};
     
     private DefaultTableModel jobModel;
     private JTable jobTable;
@@ -199,6 +200,8 @@ class Dashboard extends JFrame {
         setVisible(true);
     }
 
+    // ---- END DE ASIS ----
+    
     // --- GUI BUILDERS ---
 
     private JPanel createTopActionPanel() {
@@ -207,12 +210,12 @@ class Dashboard extends JFrame {
         // Actions
         JPanel actions = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 10));
         JButton btnCreate = new JButton("+ New Job Order");
-        btnCreate.setBackground(new Color(60, 179, 113)); btnCreate.setForeground(Color.WHITE);
+        btnCreate.setBackground(new Color(60, 179, 113)); btnCreate.setForeground(new Color(33, 52, 72));
         
         JButton btnAssign = new JButton("Assign Tech");
         JButton btnStatus = new JButton("Update Status");
         JButton btnComplete = new JButton("Complete & Remarks");
-        btnComplete.setBackground(new Color(100, 149, 237)); btnComplete.setForeground(Color.WHITE);
+        btnComplete.setBackground(new Color(100, 149, 237)); btnComplete.setForeground(new Color(33, 52, 72));
         
         actions.add(btnCreate);
         actions.add(new JSeparator(SwingConstants.VERTICAL));
